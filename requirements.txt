@@ -1,0 +1,4 @@
+Openai
+langgraph
+pydantic
+langchain-core
