@@ -1,4 +1,5 @@
-Openai
+dotenv
+openai
 langgraph
 pydantic
 langchain-core
