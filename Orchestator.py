@@ -65,7 +65,7 @@ def run_tools(state: AgentState) -> dict:
     return {"messages": results}
 
 def should_continue(state: AgentState) -> str:
-    return "LLM" if state["messages"][-1].get("role") == "tool" else "USER"
+    return "TOOLS" if state["messages"][-1].get("tool_calls") else "USER"
 
 def should_stop(state: AgentState) -> str:
         if(state["messages"][-1].get("content").strip().lower() in ["exit", "quit"]):
@@ -80,9 +80,9 @@ def Orchestrator():
     graph.add_node("TOOLS", run_tools)
 
     graph.add_edge(START, "USER")
-    graph.add_edge("LLM", "TOOLS")
+    graph.add_edge("TOOLS", "LLM")
 
-    graph.add_conditional_edges("TOOLS", should_continue)
+    graph.add_conditional_edges("LLM", should_continue)
     graph.add_conditional_edges("USER", should_stop)
     app = graph.compile()
     result= app.invoke({})
