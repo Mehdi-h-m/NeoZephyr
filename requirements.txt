@@ -3,3 +3,4 @@ openai
 langgraph
 pydantic
 langchain-core
+rich
