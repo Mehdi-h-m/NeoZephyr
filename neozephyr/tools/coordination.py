@@ -1,6 +1,6 @@
 from subprocess import run
 from enum import Enum
-from models import Task,Plan,AgentResult,OrchState
+from neozephyr.models import Task,Plan,AgentResult,OrchState
 from typing import Literal
 from pydantic import BaseModel,Field
 from langgraph.types import Command
@@ -148,8 +148,8 @@ def call_agent(
     """
     Invoke a sub-agent and return its final result.
     """
-    from agents.coder import Coder
-    from agents.searcher import Searcher
+    from neozephyr.agents.coder import Coder
+    from neozephyr.agents.searcher import Searcher
     task=state["plan"].tasks[task_id]
 
     AGENT = {

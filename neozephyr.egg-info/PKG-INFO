@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: neozephyr
+Version: 0.1.0
+Summary: AI coding agent
+Requires-Python: >=3.11

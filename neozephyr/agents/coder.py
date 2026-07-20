@@ -3,15 +3,16 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
-from models.communication import AgentState,AgentResult,Task
-from tools import GLOB_FUNCTION, READ_FUNCTION, GLOB_TOOL, READ_TOOL,GREP_TOOL, GREP_FUNCTION,FINISH_RESULT_TOOL,FINISH_RESULT_FUNCTION
-from prompts.coder import DEVELOPPER
+from neozephyr.models.communication import AgentState,Task
+from neozephyr.tools import EDIT_FUNCTION, READ_FUNCTION, EDIT_TOOL, READ_TOOL,BASH_TOOL, BASH_FUNCTION,FINISH_RESULT_TOOL,FINISH_RESULT_FUNCTION
+from neozephyr.prompts.coder import DEVELOPPER
 import time
-from tools import openai_request_with_retry
+from neozephyr.tools import openai_request_with_retry
 import traceback
+
 load_dotenv() 
 
-MODEL="poolside/laguna-xs-2.1:free"
+# MODEL="poolside/laguna-xs-2.1:free"
 MODEL="openrouter/free"
 
 client = OpenAI(
@@ -19,26 +20,30 @@ client = OpenAI(
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )
 
-TOOLS = [GLOB_TOOL, READ_TOOL, GREP_TOOL,FINISH_RESULT_TOOL]
-TOOLS_FUNCTIONS = {**GLOB_FUNCTION, **READ_FUNCTION, **GREP_FUNCTION,**FINISH_RESULT_FUNCTION}
+TOOLS = [EDIT_TOOL, READ_TOOL, BASH_TOOL,FINISH_RESULT_TOOL]
+TOOLS_FUNCTIONS = {**EDIT_FUNCTION, **READ_FUNCTION, **BASH_FUNCTION, **FINISH_RESULT_FUNCTION}
 
 import os
 import platform
 
 
 def code(state: AgentState):
-    print("SEARCHER CALLING.....")
     
+    print("CODER CALLING.....")
     if isinstance(state["task"], Task):
         task = state["task"]
     else:
         task = Task.model_validate_json(state["task"])
+    time.sleep(1)
     response = openai_request_with_retry(
-        client=client,
-     model=MODEL,
-     messages=[{"role":"developer", "content": DEVELOPPER}, *state["messages"],{"role": "user", "content": f""" Task: {task.objective} Context: {task.context}"""}],
-     tools=TOOLS,
-     )
+    client=client,
+    model=MODEL,
+    messages=[{"role":"developer", "content": DEVELOPPER}, *state["messages"],{"role": "user", "content": f""" Task: {task.objective} Context: {task.context}"""}],
+    tools=TOOLS,
+    )
+    reply = response.choices[0].message
+    if(reply.content):
+         print(reply.content)
     return {
         "messages": [{
             "role": "assistant",
@@ -51,7 +56,7 @@ def code(state: AgentState):
 def run_tools(state: AgentState) -> dict:
     tool_messages = []
 
-    print("SEARCHER Running tools...")
+    print("CODER Running tools...")
 
     for call in state["messages"][-1].get("tool_calls", []):
 
@@ -123,15 +128,9 @@ def run_tools(state: AgentState) -> dict:
 
     return {"messages": tool_messages}
 
-def should_continue(state: AgentState) -> str:
-    if not (state["messages"][-1].get("tool_calls")):
-        return "FORCETOOL"
-    if state["messages"][-1].get("tool_calls")[0]["function"]["name"]=="finishResult":
-        return "FINISH"
-    return "TOOLS"
 
 def finish(state:AgentState):
-    print("SEARCHER FINISHING ......")
+    print("CODER FINISHING......")
     call=state["messages"][-1].get("tool_calls", [])[0]
     name = call["function"]["name"]
     args = json.loads(call["function"]["arguments"])
@@ -139,6 +138,16 @@ def finish(state:AgentState):
     output = TOOLS_FUNCTIONS[name](**args)
     result={"role": "tool", "tool_call_id": call["id"], "content": str(output)}
     return {"messages": [result],"result":output}
+
+
+
+
+def should_continue(state: AgentState) -> str:
+    if not (state["messages"][-1].get("tool_calls")):
+        return "FORCETOOL"
+    if state["messages"][-1].get("tool_calls")[0]["function"]["name"]=="finishResult":
+        return "FINISH"
+    return "TOOLS"
 
 def force_tool(state:AgentState):
     if isinstance(state["task"], Task):
@@ -164,7 +173,7 @@ def force_tool(state:AgentState):
     }
 
 
-def Searcher(state:AgentState={}):
+def Coder(state:AgentState={}):
     builder = StateGraph(AgentState)
 
     builder.add_node("CODER", code)
@@ -174,6 +183,8 @@ def Searcher(state:AgentState={}):
     builder.add_node("FORCETOOL",force_tool)
 
     builder.add_node("FINISH",finish)
+
+
 
     builder.add_edge(START, "CODER") 
 
@@ -190,4 +201,4 @@ def Searcher(state:AgentState={}):
     return coding_graph.invoke(state)
 
 if(__name__ == "__main__"):
-    Searcher()
+    Coder()
