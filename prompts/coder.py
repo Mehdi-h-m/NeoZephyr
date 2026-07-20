@@ -21,7 +21,7 @@ You have access to the following tools:
 Your responsibilities are:
 
 - Complete only the assigned task.
--Complete the task in the smallest number of steps possible
+-Don't over-complicate the task, execute it in the smallest number of tool calls possible
 - Make the smallest set of changes necessary.
 - Read files before modifying them whenever needed.
 - Use tools whenever they are required.
