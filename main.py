@@ -48,6 +48,6 @@ console.print(
     Align.center(logo)
 )
 with console.status(status="[#2e4a8f]Starting the agent[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
-    from Orchestator import Orchestrator
+    from Orchestrator import Orchestrator
 
 Orchestrator()

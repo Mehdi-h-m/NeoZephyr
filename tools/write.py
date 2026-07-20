@@ -4,37 +4,24 @@ import subprocess
 import glob as glob_module
 import platform
 
-TOOLS = [
-    {
+EDIT_TOOL ={
         "type": "function",
         "function": {
-            "name": "read",
-            "description": "Read the contents of a file.",
+            "name": "edit_file",
+            "description": "Edit a file, creating it if needed or overwriting if it exists.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path to the file to read"},
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write",
-            "description": "Write content to a file, creating it if needed or overwriting if it exists.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the file to write"},
+                    "path": {"type": "string", "description": "Path to the file to edit"},
                     "content": {"type": "string", "description": "Content to write"},
                 },
                 "required": ["path", "content"],
+                "additionalProperties": False
             },
+        "strict": True
         },
-    },
-    {
+    }
+BASH_TOOL = {
         "type": "function",
         "function": {
             "name": "bash",
@@ -45,32 +32,11 @@ TOOLS = [
                     "command": {"type": "string", "description": "Shell command to run"},
                 },
                 "required": ["command"],
+                "additionalProperties": False
             },
+        "strict": True
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "glob",
-            "description": "Find files matching a glob pattern, e.g. '**/*.py'.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {"type": "string", "description": "Glob pattern to match"},
-                    "path": {"type": "string", "description": "Directory to search from (default: cwd)"},
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-]
-
-def read(path: str) -> str:
-    try:
-        with open(path) as f:
-            return f.read()
-    except Exception as e:
-        return f"Error reading {path}: {e}"
+    }
 
 def write(path: str, content: str) -> str:
     try:
@@ -97,8 +63,5 @@ def bash(command: str) -> str:
     except Exception as e:
         return f"Error running command: {e}"
 
-def glob(pattern: str, path: str = ".") -> str:
-    matches = glob_module.glob(os.path.join(path, pattern), recursive=True)
-    return "\n".join(matches) if matches else "No files matched"
-
-TOOL_FUNCTIONS = {"read": read, "write": write, "bash": bash, "glob": glob}
+EDIT_FUNCTION = {"edit_file": write}
+BASH_FUNCTION = {"bash": bash}
