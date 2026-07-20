@@ -9,6 +9,9 @@ from neozephyr.prompts.coder import DEVELOPPER
 import time
 from neozephyr.tools import openai_request_with_retry
 import traceback
+from rich.console import Console
+
+console= Console()
 load_dotenv() 
 
 MODEL="poolside/laguna-xs-2.1:free"
@@ -23,105 +26,108 @@ TOOLS = [GLOB_TOOL, READ_TOOL, GREP_TOOL,FINISH_RESULT_TOOL]
 TOOLS_FUNCTIONS = {**GLOB_FUNCTION, **READ_FUNCTION, **GREP_FUNCTION,**FINISH_RESULT_FUNCTION}
 
 import os
-import platform
 
 
 def code(state: AgentState):
-    print("SEARCHER CALLING.....")
-    
-    if isinstance(state["task"], Task):
-        task = state["task"]
-    else:
-        task = Task.model_validate_json(state["task"])
-    response = openai_request_with_retry(
-        client=client,
-     model=MODEL,
-     messages=[{"role":"developer", "content": DEVELOPPER}, *state["messages"],{"role": "user", "content": f""" Task: {task.objective} Context: {task.context}"""}],
-     tools=TOOLS,
-     )
-    return {
-        "messages": [{
-            "role": "assistant",
-            "result": response.choices[0].message.content,
-            "tool_calls": [tc.model_dump() for tc in response.choices[0].message.tool_calls] if response.choices[0].message.tool_calls else [],
-        }]
-    }
+    with console.status(status="[#00ff04]Calling Searcher[/#00ff04]", spinner="simpleDotsScrolling", spinner_style="#00ff04"):
+        
+        if isinstance(state["task"], Task):
+            task = state["task"]
+        else:
+            task = Task.model_validate_json(state["task"])
+        response = openai_request_with_retry(
+            client=client,
+        model=MODEL,
+        messages=[{"role":"developer", "content": DEVELOPPER}, *state["messages"],{"role": "user", "content": f""" Task: {task.objective} Context: {task.context}"""}],
+        tools=TOOLS,
+        )
+        reply = response.choices[0].message
+        if(reply.content):
+            print()
+            console.print(reply.content,style="#00ff04")
+            print()
+        return {
+            "messages": [{
+                "role": "assistant",
+                "result": response.choices[0].message.content,
+                "tool_calls": [tc.model_dump() for tc in response.choices[0].message.tool_calls] if response.choices[0].message.tool_calls else [],
+            }]
+        }
 
 
 def run_tools(state: AgentState) -> dict:
     tool_messages = []
+    with console.status(status="[#00ff04]Searcher Running tools[/#00ff04]", spinner="simpleDotsScrolling", spinner_style="#00ff04"):
 
-    print("SEARCHER Running tools...")
+        for call in state["messages"][-1].get("tool_calls", []):
 
-    for call in state["messages"][-1].get("tool_calls", []):
+            tool_call_id = call["id"]
 
-        tool_call_id = call["id"]
+            # ---------------- Parse tool call ----------------
 
-        # ---------------- Parse tool call ----------------
+            try:
+                name = call["function"]["name"]
+                args = json.loads(call["function"]["arguments"])
 
-        try:
-            name = call["function"]["name"]
-            args = json.loads(call["function"]["arguments"])
+            except Exception:
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": (
+                            "Tool call could not be parsed.\n\n"
+                            f"{traceback.format_exc()}"
+                        ),
+                    }
+                )
+                continue
 
-        except Exception:
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": (
-                        "Tool call could not be parsed.\n\n"
-                        f"{traceback.format_exc()}"
-                    ),
-                }
-            )
-            continue
+            # print(f"Running tool: {name} with arguments: {args}")
 
-        print(f"Running tool: {name} with arguments: {args}")
+            # ---------------- Find tool ----------------
 
-        # ---------------- Find tool ----------------
+            if name not in TOOLS_FUNCTIONS:
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": f"Unknown tool '{name}'.",
+                    }
+                )
+                continue
 
-        if name not in TOOLS_FUNCTIONS:
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": f"Unknown tool '{name}'.",
-                }
-            )
-            continue
+            # ---------------- Execute tool ----------------
 
-        # ---------------- Execute tool ----------------
+            try:
+                output = TOOLS_FUNCTIONS[name](**args)
 
-        try:
-            output = TOOLS_FUNCTIONS[name](**args)
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": str(output),
+                    }
+                )
 
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": str(output),
-                }
-            )
+            except Exception as e:
+                # Print locally for debugging
+                traceback.print_exc()
 
-        except Exception as e:
-            # Print locally for debugging
-            traceback.print_exc()
-
-            # Return the error to the LLM so it can recover
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": (
-                        f"Tool '{name}' failed.\n\n"
-                        f"Error type: {type(e).__name__}\n"
-                        f"Error: {e}\n\n"
-                        f"Traceback:\n{traceback.format_exc()}"
-                    ),
-                }
-            )
-
-    return {"messages": tool_messages}
+                # Return the error to the LLM so it can recover
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": (
+                            f"Tool '{name}' failed.\n\n"
+                            f"Error type: {type(e).__name__}\n"
+                            f"Error: {e}\n\n"
+                            f"Traceback:\n{traceback.format_exc()}"
+                        ),
+                    }
+                )
+        console.print("Researcher called tools",style="#00ff04")
+        return {"messages": tool_messages}
 
 def should_continue(state: AgentState) -> str:
     if not (state["messages"][-1].get("tool_calls")):
@@ -131,14 +137,15 @@ def should_continue(state: AgentState) -> str:
     return "TOOLS"
 
 def finish(state:AgentState):
-    print("SEARCHER FINISHING ......")
-    call=state["messages"][-1].get("tool_calls", [])[0]
-    name = call["function"]["name"]
-    args = json.loads(call["function"]["arguments"])
-    print(f"Running tool: {name} with arguments: {call['function']['arguments']}")
-    output = TOOLS_FUNCTIONS[name](**args)
-    result={"role": "tool", "tool_call_id": call["id"], "content": str(output)}
-    return {"messages": [result],"result":output}
+    with console.status(status="[#00ff04]Searcher Finishing[/#00ff04]", spinner="simpleDotsScrolling", spinner_style="#00ff04"):
+
+        call=state["messages"][-1].get("tool_calls", [])[0]
+        name = call["function"]["name"]
+        args = json.loads(call["function"]["arguments"])
+        output = TOOLS_FUNCTIONS[name](**args)
+        result={"role": "tool", "tool_call_id": call["id"], "content": str(output)}
+        console.print("Researcher finished work",style="#00ff04")
+        return {"messages": [result],"result":output}
 
 def force_tool(state:AgentState):
     if isinstance(state["task"], Task):
@@ -152,9 +159,6 @@ def force_tool(state:AgentState):
     messages=[{"role":"developer", "content": DEVELOPPER}, *state["messages"],{"role": "user", "content": f""" Task: {task.objective} Context: {task.context} ALERT: IF YOU FINISHED YOUR TASK ALWAYS CALL THE finishResult tool TO REPORT YOUR TASK INFORMATIONS, you always have to call a tool"""}],
    tools=TOOLS,
     )
-    reply = response.choices[0].message
-    if(reply.content):
-         print(reply.content)
     return {
         "messages": [{
             "role": "tool",

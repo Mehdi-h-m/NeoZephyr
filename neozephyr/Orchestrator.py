@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
-from typing import Literal, TypedDict, Annotated, Union
-import operator
+from typing import Literal
 import time
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
@@ -10,7 +9,6 @@ from neozephyr.tools import AGENT_TOOL, AGENT_FUNCTION,UPDATETASK_FUNCTION,UPDAT
 import json
 from rich.console import Console
 from neozephyr.prompts.orchestrator import DEVELOPPER
-from neozephyr.models import Plan
 from neozephyr.models import OrchState
 from neozephyr.tools import openai_request_with_retry
 import traceback
@@ -61,102 +59,103 @@ def prompt_user(state: OrchState) -> Command[Literal["LLM", END]] | dict:
         return{"messages": [{"role": "user", "content": input_text}]}
 
 def call_model(state: OrchState) -> dict:
-    print("Calling model...")
-    plantext=format_Plan(state=state)
-    time.sleep(1)
-    response = openai_request_with_retry(
-        client=client,
-        model=MODEL,
-        messages=[{"role":"developer", "content": DEVELOPPER}] + state["messages"]+[{"role": "user", "content": plantext}],
-        tools=TOOLS
-    )
-    reply = response.choices[0].message
-    if(reply.content):
-         print(reply.content)
-    return {"messages": [{
-        "role": "assistant",
-        "content": reply.content,
-        "tool_calls": [tc.model_dump() for tc in reply.tool_calls] if reply.tool_calls else [],
-    }]}
+    with console.status(status="[#2e4a8f]Calling Orchestrator[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
+        plantext=format_Plan(state=state)
+        time.sleep(1)
+        response = openai_request_with_retry(
+            client=client,
+            model=MODEL,
+            messages=[{"role":"developer", "content": DEVELOPPER}] + state["messages"]+[{"role": "user", "content": plantext}],
+            tools=TOOLS
+        )
+        reply = response.choices[0].message
+        if(reply.content):
+            print()
+            console.print(reply.content,style="#2e4a8f")
+            print()
+        return {"messages": [{
+            "role": "assistant",
+            "content": reply.content,
+            "tool_calls": [tc.model_dump() for tc in reply.tool_calls] if reply.tool_calls else [],
+        }]}
 
 
 
 
 def run_tools(state: OrchState) -> dict:
     tool_messages = []
+    with console.status(status="[#2e4a8f]Running tools[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
 
-    print("Running tools...")
+        for call in state["messages"][-1].get("tool_calls", []):
 
-    for call in state["messages"][-1].get("tool_calls", []):
+            tool_call_id = call["id"]
 
-        tool_call_id = call["id"]
+            # ---------------- Parse tool call ----------------
 
-        # ---------------- Parse tool call ----------------
+            try:
+                name = call["function"]["name"]
+                args = json.loads(call["function"]["arguments"])
 
-        try:
-            name = call["function"]["name"]
-            args = json.loads(call["function"]["arguments"])
+            except Exception:
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": (
+                            "Tool call could not be parsed.\n\n"
+                            f"{traceback.format_exc()}"
+                        ),
+                    }
+                )
+                continue
 
-        except Exception:
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": (
-                        "Tool call could not be parsed.\n\n"
-                        f"{traceback.format_exc()}"
-                    ),
-                }
-            )
-            continue
+            # print(f"Running tool: {name} with arguments: {args}")
 
-        print(f"Running tool: {name} with arguments: {args}")
+            # ---------------- Find tool ----------------
 
-        # ---------------- Find tool ----------------
+            if name not in TOOL_FUNCTIONS:
 
-        if name not in TOOL_FUNCTIONS:
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": f"Unknown tool '{name}'.",
+                    }
+                )
+                continue
 
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": f"Unknown tool '{name}'.",
-                }
-            )
-            continue
+            # ---------------- Execute tool ----------------
 
-        # ---------------- Execute tool ----------------
+            try:
+                args["state"]=state
+                output = TOOL_FUNCTIONS[name](**args)
 
-        try:
-            args["state"]=state
-            output = TOOL_FUNCTIONS[name](**args)
+                if(name == "call_agent"):
+                    tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output["result"])})
+                else:
+                    tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
+                if isinstance(output,Command):
+                    return output
 
-            if(name == "call_agent"):
-                tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output["result"])})
-            else:
-                tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-            if isinstance(output,Command):
-                return output
+            except Exception as e:
+                # Print locally for debugging
+                traceback.print_exc()
 
-        except Exception as e:
-            # Print locally for debugging
-            traceback.print_exc()
+                # Return the error to the LLM so it can recover
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": (
+                            f"Tool '{name}' failed.\n\n"
+                            f"Error type: {type(e).__name__}\n"
+                            f"Error: {e}\n\n"
+                            f"Traceback:\n{traceback.format_exc()}"
+                        ),
+                    }
+                )
 
-            # Return the error to the LLM so it can recover
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": (
-                        f"Tool '{name}' failed.\n\n"
-                        f"Error type: {type(e).__name__}\n"
-                        f"Error: {e}\n\n"
-                        f"Traceback:\n{traceback.format_exc()}"
-                    ),
-                }
-            )
-
-    return {"messages": tool_messages}
+        return {"messages": tool_messages}
 
 
 

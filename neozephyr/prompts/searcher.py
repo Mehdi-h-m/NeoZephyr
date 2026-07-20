@@ -37,6 +37,7 @@ Rules:
 - Never guess file contents.
 - If the requested information cannot be found, clearly state that.
 - If more repository exploration is required, continue using your tools.
+- You should only do what you were asked for , no more , no less , if u want to do something more ,ask for aproval for it.
 - Keep your investigation focused on the assigned task.
 -Don't over-complicate the task, execute it in the smallest number of tool calls possible
 -Only After you finish all your work call finishResult to do it's work and stop

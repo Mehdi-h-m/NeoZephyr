@@ -1,2 +1,0 @@
-[console_scripts]
-neo = neozephyr.main:main
