@@ -84,65 +84,68 @@ def call_model(state: OrchState) -> dict:
 
 def run_tools(state: OrchState) -> dict:
     tool_messages = []
-    with console.status(status="[#2e4a8f]Running tools[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
 
-        for call in state["messages"][-1].get("tool_calls", []):
 
-            tool_call_id = call["id"]
+    for call in state["messages"][-1].get("tool_calls", []):
+
+        tool_call_id = call["id"]
 
             # ---------------- Parse tool call ----------------
 
-            try:
-                name = call["function"]["name"]
-                args = json.loads(call["function"]["arguments"])
+        try:
+            name = call["function"]["name"]
+            args = json.loads(call["function"]["arguments"])
 
-            except Exception:
-                tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": (
-                            "Tool call could not be parsed.\n\n"
-                            f"{traceback.format_exc()}"
-                        ),
-                    }
-                )
-                continue
+        except Exception:
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": (
+                        "Tool call could not be parsed.\n\n"
+                        f"{traceback.format_exc()}"
+                    ),
+                }
+            )
+            continue
 
-            # print(f"Running tool: {name} with arguments: {args}")
+        # print(f"Running tool: {name} with arguments: {args}")
 
             # ---------------- Find tool ----------------
 
-            if name not in TOOL_FUNCTIONS:
+        if name not in TOOL_FUNCTIONS:
 
-                tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": f"Unknown tool '{name}'.",
-                    }
-                )
-                continue
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": f"Unknown tool '{name}'.",
+                }
+            )
+            continue
 
             # ---------------- Execute tool ----------------
 
-            try:
-                args["state"]=state
+        try:
+            args["state"]=state
+
+            if(name == "call_agent"):
                 output = TOOL_FUNCTIONS[name](**args)
+                tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output["result"])})
 
-                if(name == "call_agent"):
-                    tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output["result"])})
-                else:
+            else:
+                with console.status(status="[#2e4a8f]Running tools[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
+                    output = TOOL_FUNCTIONS[name](**args)
                     tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-                if isinstance(output,Command):
-                    return output
+            if isinstance(output,Command):
+               return output
 
-            except Exception as e:
+        except Exception as e:
                 # Print locally for debugging
-                traceback.print_exc()
+            traceback.print_exc()
 
                 # Return the error to the LLM so it can recover
-                tool_messages.append(
+            tool_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call_id,
