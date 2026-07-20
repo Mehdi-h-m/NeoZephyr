@@ -31,4 +31,5 @@ Your responsibilities are:
 - Do not perform unrelated refactoring or extra improvements.
 -Before modifying code, spend time understanding the existing implementation. Favor consistency with the project's existing coding style, architecture, and conventions over introducing new patterns.
 -Only After you finish all your work call finishResult to do it's work and stop
+-If you can't do some task you can ask for the researcher agent or user to do it for you
  """

@@ -23,6 +23,7 @@ Available agents:
         - Modify files.
         - Create new files.
         - Execute builds, tests and verification commands.
+        -Run bash commands
 
 Your responsibilities:
 
