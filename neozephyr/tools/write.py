@@ -1,7 +1,5 @@
-from langgraph.graph import StateGraph
 import os
 import subprocess
-import glob as glob_module
 import platform
 
 EDIT_TOOL ={
@@ -63,5 +61,5 @@ def bash(command: str) -> str:
     except Exception as e:
         return f"Error running command: {e}"
 
-EDIT_FUNCTION = {"edit_file": write}
-BASH_FUNCTION = {"bash": bash}
+EDIT_FUNCTION = write
+BASH_FUNCTION = bash

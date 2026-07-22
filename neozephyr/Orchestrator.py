@@ -1,17 +1,16 @@
 import os
 from dotenv import load_dotenv
 from typing import Literal
-import time
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
-from neozephyr.tools import AGENT_TOOL, AGENT_FUNCTION,UPDATETASK_FUNCTION,UPDATETASK_TOOL,CREATPLAN_FUNCTION,CREATPLAN_TOOL
-import json
+from neozephyr.tools import TOOLS
 from rich.console import Console
-from neozephyr.prompts.orchestrator import DEVELOPPER
-from neozephyr.models import OrchState
-from neozephyr.tools import openai_request_with_retry
-import traceback
+from neozephyr.agents import Worker
+from neozephyr.prompts import ORCHDEVELOPPER,PLANNERDEVELOPPER
+from neozephyr.models import OrchestratorOutput,OrchState,PlannerOutput,ExecutionResult,Plan,Task,AgentResult
+from neozephyr.tools import openai_request_with_retry,toolforce, ORCHESTRATOR_DECISION_TOOL, CREATE_PLAN_TOOL
+
 console=Console()
 load_dotenv() 
 
@@ -24,27 +23,57 @@ client = OpenAI(
 )
 
 
-TOOLS = [AGENT_TOOL,UPDATETASK_TOOL,CREATPLAN_TOOL]
-TOOL_FUNCTIONS = {**AGENT_FUNCTION,**CREATPLAN_FUNCTION,**UPDATETASK_FUNCTION}
-
-
 def format_Plan(state:OrchState):
     if(state["plan"]):
         plan=f"""Plan :
-        Description: {state['plan'].Description}
+        PlanID : {state['plan'].id}
+        Description: {state['plan'].description}
         Tasks : """
-        for task in state["plan"].tasks:
+        for task in state["plan"].plan:
             plan+= f"""
-            **{task.id}/ {task.objective}"""
+            ** ID:{task.id}/ {task.objective}"""
     else :
         plan=f"""Plan : 
         There's no plan yet """
     
     return plan
 
-    
 
-def prompt_user(state: OrchState) -> Command[Literal["LLM", END]] | dict:
+def format_execution_history(state: OrchState) -> str:
+    if not state.get("execution_history") :
+        return """Execution History:
+There is no execution history yet."""
+
+    history = "Execution History:\n"
+
+    for execution in state["executionHistory"]:
+        history += f"""
+----------------------------------------
+Plan ID: {execution.plan_id}
+Task ID: {execution.task_id}
+Status: {execution.result.status}
+Summary: {execution.result.summary}"""
+
+        if execution.result.modified_files:
+            history += "\nModified Files:"
+            for file in execution.result.modified_files:
+                history += f"\n- {file}"
+
+        if execution.result.output:
+            history += "\nOutput:"
+            for item in execution.result.output:
+                history += f"\n- {item}"
+
+        history += "\n"
+
+    return history
+
+
+
+
+
+
+def prompt_user(state: OrchState) -> Command[Literal["ORCHESTRATOR", END]] | dict:
     """
     Prompt the user for input and Store it in the state.
     """
@@ -60,129 +89,163 @@ def prompt_user(state: OrchState) -> Command[Literal["LLM", END]] | dict:
 
 def call_model(state: OrchState) -> dict:
     with console.status(status="[#2e4a8f]Calling Orchestrator[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
-        plantext=format_Plan(state=state)
-        time.sleep(1)
-        response = openai_request_with_retry(
+        plantext = f"""
+        {format_Plan(state)}
+
+        {format_execution_history(state)}
+        """
+        response = toolforce(
+            tool_name="orchestratorDecision",
             client=client,
             model=MODEL,
-            messages=[{"role":"developer", "content": DEVELOPPER}] + state["messages"]+[{"role": "user", "content": plantext}],
-            tools=TOOLS
+            messages=[{"role":"developer", "content": ORCHDEVELOPPER}] + state["messages"]+[{"role": "user", "content": plantext}],
+            tools=[ORCHESTRATOR_DECISION_TOOL],
+            tool_choice={
+                "type": "function",
+                "function": {
+                    "name": "orchestratorDecision"
+                }
+            }
         )
         reply = response.choices[0].message
-        if(reply.content):
-            print()
-            console.print(reply.content,style="#2e4a8f")
-            print()
-        return {"messages": [{
-            "role": "assistant",
-            "content": reply.content,
-            "tool_calls": [tc.model_dump() for tc in reply.tool_calls] if reply.tool_calls else [],
-        }]}
+        result = OrchestratorOutput(
+            action="finish",      # temporary default
+            user_output="",
+            task_id=None,
+            context={},
+        )
 
+        call = reply.tool_calls[0]
 
+        result = OrchestratorOutput.model_validate(
+            call.function.parsed_arguments)
 
+        if result.user_output:
+            console.print()
+            console.print(result.user_output, style="#2e4a8f")
+            console.print()
 
-def run_tools(state: OrchState) -> dict:
-    tool_messages = []
+        return {
+            "messages": [{
+                "role": "assistant",
+                "content": result.user_output,
+                "tool_calls": [
+                    tc.model_dump() for tc in reply.tool_calls
+                ] if reply.tool_calls else [],
+            }],
+            "action": result.action,
+            "current_task_id": result.task_id,
+            "current_context": result.context
+        }
+    
 
+def plan(state: OrchState):
+      
+    with console.status(status="[#2e4a8f]Calling Planner[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
+        available_tools = "\n".join(
+        f"- {tool['function']['name']}: {tool['function']['description']}"
+        for tool in TOOLS.definitions()
+        )
 
-    for call in state["messages"][-1].get("tool_calls", []):
+        plantext = f"""
+        {format_Plan(state)}
 
-        tool_call_id = call["id"]
+        {format_execution_history(state)}
 
-            # ---------------- Parse tool call ----------------
+        Available Worker Tools
+        ======================
 
-        try:
-            name = call["function"]["name"]
-            args = json.loads(call["function"]["arguments"])
+        The planner may assign any subset of the following tools to each task.
 
-        except Exception:
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": (
-                        "Tool call could not be parsed.\n\n"
-                        f"{traceback.format_exc()}"
-                    ),
+        {available_tools}
+        """
+        response = toolforce(
+            tool_name="createPlan",
+            client=client,
+            model=MODEL,
+            messages=[{"role":"developer", "content": PLANNERDEVELOPPER}] + state["messages"]+[{"role": "user", "content": plantext}],
+            tools=[CREATE_PLAN_TOOL],
+            tool_choice={
+                "type": "function",
+                "function": {
+                    "name": "createPlan"
                 }
-            )
-            continue
+            }
+        )
+        reply = response.choices[0].message
+        result = PlannerOutput(
+            plan= None
+        )
+        call = reply.tool_calls[0]
 
-        # print(f"Running tool: {name} with arguments: {args}")
+        result = PlannerOutput.model_validate(
+            call.function.parsed_arguments)
 
-            # ---------------- Find tool ----------------
+        if(state["plan"]):
+            next_plan_id = state["plan"].id +1
+        else:
+                next_plan_id=0
 
-        if name not in TOOL_FUNCTIONS:
+    return {"plan":Plan(
+        id=next_plan_id,
+        description=result.plan.description,
+        plan=[
+            Task(
+                id=i,
+                **task.model_dump(),
+             )
+        for i, task in enumerate(result.plan.tasks)
+         ],
+    )
+    }
 
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": f"Unknown tool '{name}'.",
-                }
-            )
-            continue
-
-            # ---------------- Execute tool ----------------
-
-        try:
-            args["state"]=state
-
-            if(name == "call_agent"):
-                output = TOOL_FUNCTIONS[name](**args)
-                tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output["result"])})
-
-            else:
-                with console.status(status="[#2e4a8f]Running tools[/#2e4a8f]", spinner="simpleDotsScrolling", spinner_style="#2e4a8f"):
-                    output = TOOL_FUNCTIONS[name](**args)
-                    tool_messages.append({"role": "tool", "tool_call_id": call["id"], "content": str(output)})
-            if isinstance(output,Command):
-               return output
-
-        except Exception as e:
-                # Print locally for debugging
-            traceback.print_exc()
-
-                # Return the error to the LLM so it can recover
-            tool_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": (
-                            f"Tool '{name}' failed.\n\n"
-                            f"Error type: {type(e).__name__}\n"
-                            f"Error: {e}\n\n"
-                            f"Traceback:\n{traceback.format_exc()}"
-                        ),
-                    }
-                )
-
-        return {"messages": tool_messages}
-
-
+def run_agent(state:OrchState):
+    planID=state["plan"].id
+    taskID=state["current_task_id"]
+    task= state["plan"].plan[taskID]
+    task.context=state["current_context"]
+    work= Worker({"task": task})
+    result = work.result
+    state["plan"].plan[taskID].status = "completed"
+    executionresult= ExecutionResult(result=result,planID=planID,taskID=taskID)
+    return{
+        "execution_history": executionresult,
+        "current_task_id" : None,
+        "current_context" : ""
+    }
 
 
 
 def should_continue(state: OrchState) -> str:
-    return "TOOLS" if state["messages"][-1].get("tool_calls") else "USER"
+    match state["action"]:
+        case "finish":
+            return "USER"
+        case "run_task":
+            return "AGENT"
+        case "create_plan":
+            return "PLANNER"
+        case "replan":
+            return "PLANNER"
+    
 
 def should_stop(state: OrchState) -> str:
         if(state["messages"][-1].get("content").strip().lower() in ["exit", "quit"]):
              print("\nExiting...")
              return END
-        return "LLM"
+        return "ORCHESTRATOR"
 
 def Orchestrator():
     graph = StateGraph(OrchState)
     graph.add_node("USER", prompt_user)
-    graph.add_node("LLM", call_model)
-    graph.add_node("TOOLS", run_tools)
+    graph.add_node("ORCHESTRATOR", call_model)
+    graph.add_node("AGENT", run_agent)
+    graph.add_node("PLANNER",plan)
 
     graph.add_edge(START, "USER")
-    graph.add_edge("TOOLS", "LLM")
+    graph.add_edge("PLANNER", "ORCHESTRATOR")
+    graph.add_edge("AGENT","ORCHESTRATOR")
 
-    graph.add_conditional_edges("LLM", should_continue)
+    graph.add_conditional_edges("ORCHESTRATOR", should_continue)
     graph.add_conditional_edges("USER", should_stop)
     app = graph.compile()
     result= app.invoke({})

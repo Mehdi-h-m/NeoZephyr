@@ -2,32 +2,17 @@ import operator
 from pydantic import BaseModel,Field
 from typing import Annotated, Annotated, Literal, TypedDict,Any
 
-class Task(BaseModel):
-    id: int= Field(default=0,description="Unique identifier for the task inside the plan(0 position in the plan).")
-
-    type: Literal["code", "research"] = Field(default="",description="The type of the task to be executed wether by code or research agents.")
-   
-    status: Literal["pending","completed"]= Field(default="pending", description="The status of the task either finished or not yet")
-    
-    objective: str = Field(default="",description="The objective of the task.")
-
-    context: dict = Field(default={},description="The context for the task that will be known by the other agents.")
-
-
-class Plan(BaseModel):
-    tasks: list[Task]
-    Description: str =Field(default="", description="Description of the goal of this Plan")
-    id: int= Field(default=0, description="Unique Id of the plan to (incrementing from 0)")
-
-
 class AgentResult(BaseModel):
     status: Literal[
         "success",
         "failed",
-        "need_search",
-        "need_code",
+        "need_tools",
         "need_user"
-    ] = Field(description="Indicates the status of the agent's operation. It can be 'success', 'failed', 'need_search', 'need_code', or 'need_user'.")
+    ] = Field(description=("Indicates the status of the agent's operation. It can be : \n\n"
+         "-success : if the task completed successfully\n", 
+         "-failed : if it is impossible to execute the task\n",
+        "-need_tools: if the tools given are not enough to execute the task\n",
+        "-need_user: if context from user is needed ,like confirmation or context\n"))
 
     summary: str= Field(description="A brief summary of the agent's operation or findings.")
 
@@ -42,6 +27,19 @@ class AgentState(TypedDict):
     messages: Annotated[list[dict], operator.add]
     result: AgentResult | None
 
-class OrchState(TypedDict):
-    messages: Annotated[list[dict], operator.add]
-    plan : Plan = Field(default=None)
+class Task(BaseModel):
+    id: int= Field(default=0,description="Unique identifier for the task inside the plan(0 position in the plan).")
+
+    tools: list[str] = Field(
+        description=(
+            "Names of the tools required to complete this task. "
+            "Only include tools that are genuinely needed."
+        )
+    )
+   
+    status: Literal["pending","completed"]= Field(default="pending", description="The status of the task either finished or not yet")
+    
+    objective: str = Field(default="",description="A clear, self-contained objective that a worker can complete "
+            "without needing additional planning.")
+
+    context: dict[str, Any] = Field(default={},description="The context for the task that will be known by the other agents.")

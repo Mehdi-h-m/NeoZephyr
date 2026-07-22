@@ -1,4 +1,3 @@
-from langgraph.graph import StateGraph
 import os
 import glob as glob_module
 from pathlib import Path
@@ -170,6 +169,6 @@ def search_code(
 
     return matches
 
-READ_FUNCTION = {"read": read}
-GLOB_FUNCTION = {"glob": glob}
-GREP_FUNCTION = {"search_code": search_code}
+READ_FUNCTION = read
+GLOB_FUNCTION = glob
+GREP_FUNCTION = search_code

@@ -1,6 +1,4 @@
-from .coder import Coder
+from .worker import Worker
 
 __all__ = [
-    "CoderAgent",
-    "SearcherAgent",
 ]
