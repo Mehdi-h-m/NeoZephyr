@@ -265,7 +265,3 @@ Future work includes:
 - Multi-repository workflows
 
 ---
-
-## License
-
-MIT License.
